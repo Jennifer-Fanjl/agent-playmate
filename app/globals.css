@@ -731,7 +731,7 @@ button, input { font: inherit; }
 }
 .text-compose {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 0.5rem;
 }
 .text-compose input {
@@ -745,6 +745,22 @@ button, input { font: inherit; }
   width: 44px;
   height: 44px;
   border-radius: 2px;
+}
+.text-compose .compose-mic {
+  color: #7fc7c1;
+  border-color: #315b58;
+  background: rgba(9, 25, 27, 0.92);
+}
+.text-compose .compose-mic:hover {
+  color: #a4fff5;
+  border-color: #5bc8be;
+  background: #123133;
+}
+.text-compose .compose-mic.is-recording {
+  color: #180807;
+  border-color: #ff8a82;
+  background: #ff7469;
+  box-shadow: 0 0 18px rgba(255, 74, 65, 0.24);
 }
 .quick-prompts {
   display: flex;

@@ -88,6 +88,21 @@ const gameModeCopy = {
   planned: { label: "后续扩展", icon: Clock3 },
 } as const;
 
+const MAX_RECORDING_MS = 45_000;
+const MAX_AUDIO_BYTES = 7_500_000;
+
+function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () =>
+      typeof reader.result === "string"
+        ? resolve(reader.result)
+        : reject(new Error("录音格式读取失败"));
+    reader.onerror = () => reject(new Error("录音格式读取失败"));
+    reader.readAsDataURL(blob);
+  });
+}
+
 function getMemoryKey(name: string) {
   return `playmate_memory_${name.trim().toLocaleLowerCase()}`;
 }
@@ -168,10 +183,13 @@ export default function Home() {
   const [agentState, setAgentState] = useState<AgentState>("idle");
   const [permissionError, setPermissionError] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [isStartingRobot, setIsStartingRobot] = useState(false);
   const [robotCommand, setRobotCommand] = useState<RobotCommandResponse | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimeoutRef = useRef<number | null>(null);
   const sessionIdRef = useRef("");
   const memoryReadyRef = useRef(false);
   const skipNextMemorySaveRef = useRef(false);
@@ -186,6 +204,15 @@ export default function Home() {
       setDraftName(savedName);
       restoreMemory(savedName);
     }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (recordingTimeoutRef.current) {
+        window.clearTimeout(recordingTimeoutRef.current);
+      }
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+    };
   }, []);
 
   useEffect(() => {
@@ -404,19 +431,51 @@ export default function Home() {
     void sendMessage(textInput);
   }
 
-  function stopRecording() {
-    recorderRef.current?.stop();
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    recorderRef.current = null;
-    streamRef.current = null;
-    setAgentState("thinking");
-    window.setTimeout(() => {
-      appendMessage(
-        "assistant",
-        "录音已经收到。语音识别模型还没有接入，请先使用下方文字输入测试 Agent。",
+  async function transcribeAudio(blob: Blob) {
+    if (blob.size < 800) {
+      setPermissionError("录音太短了，请按下麦克风后说一句完整的话。");
+      setAgentState("idle");
+      return;
+    }
+    if (blob.size > MAX_AUDIO_BYTES) {
+      setPermissionError("录音内容过长，请控制在 45 秒以内再试。");
+      setAgentState("idle");
+      return;
+    }
+
+    setIsTranscribing(true);
+    setPermissionError("");
+    try {
+      const audio = await blobToDataUrl(blob);
+      const response = await fetch("/api/speech/transcribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audio }),
+      });
+      const data = (await response.json()) as { text?: string; error?: string };
+      if (!response.ok || !data.text?.trim()) {
+        throw new Error(data.error || "没有识别出清晰内容，请再说一次。");
+      }
+      await sendMessage(data.text);
+    } catch (error) {
+      setPermissionError(
+        error instanceof Error ? error.message : "语音识别暂时不可用，请再试一次。",
       );
       setAgentState("idle");
-    }, 650);
+    } finally {
+      setIsTranscribing(false);
+    }
+  }
+
+  function stopRecording() {
+    const recorder = recorderRef.current;
+    if (!recorder || recorder.state === "inactive") return;
+    if (recordingTimeoutRef.current) {
+      window.clearTimeout(recordingTimeoutRef.current);
+      recordingTimeoutRef.current = null;
+    }
+    setAgentState("thinking");
+    recorder.stop();
   }
 
   async function toggleRecording() {
@@ -425,14 +484,45 @@ export default function Home() {
       stopRecording();
       return;
     }
-    if (agentState !== "idle") return;
+    if (agentState !== "idle" || isSending || isTranscribing) return;
 
     try {
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+        setPermissionError("当前浏览器不支持录音，请使用最新版 Chrome、Edge 或 Safari。");
+        return;
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/mp4",
+        "audio/ogg;codecs=opus",
+      ].find((type) => MediaRecorder.isTypeSupported(type));
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+
       streamRef.current = stream;
-      recorderRef.current = new MediaRecorder(stream);
-      recorderRef.current.start();
+      recorderRef.current = recorder;
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
+      recorder.onerror = () => {
+        setPermissionError("录音没有成功，请检查麦克风后再试。");
+        setAgentState("idle");
+      };
+      recorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: recorder.mimeType || mimeType || "audio/webm",
+        });
+        stream.getTracks().forEach((track) => track.stop());
+        recorderRef.current = null;
+        streamRef.current = null;
+        audioChunksRef.current = [];
+        void transcribeAudio(audioBlob);
+      };
+      recorder.start(250);
       setAgentState("listening");
+      recordingTimeoutRef.current = window.setTimeout(stopRecording, MAX_RECORDING_MS);
     } catch {
       setPermissionError("没有获得麦克风权限，请在浏览器设置中允许后再试。当前仍可使用文字测试。 ");
     }
@@ -746,8 +836,8 @@ export default function Home() {
 
           <div className="text-test-panel">
             <div className="text-test-heading">
-              <span><Keyboard size={16} /> 临时文字测试</span>
-              <span>语音模型接入后将自动隐藏</span>
+              <span><Keyboard size={16} /> 文字输入</span>
+              <span>输入或直接说话</span>
             </div>
             <form className="text-compose" onSubmit={submitText}>
               <Input
@@ -755,16 +845,28 @@ export default function Home() {
                 onChange={(event) => setTextInput(event.target.value)}
                 placeholder="试试输入：我有点无聊，不知道玩什么"
                 maxLength={500}
-                disabled={isSending}
-                aria-label="输入测试消息"
+                disabled={isSending || isTranscribing}
+                aria-label="输入消息"
               />
-              <Button type="submit" size="icon" disabled={!textInput.trim() || isSending} aria-label="发送消息">
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                className={`compose-mic ${agentState === "listening" ? "is-recording" : ""}`}
+                onClick={toggleRecording}
+                disabled={agentState === "thinking" || agentState === "speaking" || isTranscribing}
+                aria-label={agentState === "listening" ? "结束录音" : "开始录音"}
+                title={agentState === "listening" ? "结束录音" : "点击说话"}
+              >
+                {agentState === "listening" ? <MicOff size={18} /> : <Mic size={18} />}
+              </Button>
+              <Button type="submit" size="icon" disabled={!textInput.trim() || isSending || isTranscribing} aria-label="发送消息">
                 <Send size={18} />
               </Button>
             </form>
             <div className="quick-prompts" aria-label="快捷测试语句">
               {["我有点无聊", "推荐一个游戏", "换一个别的"].map((prompt) => (
-                <button key={prompt} type="button" onClick={() => void sendMessage(prompt)} disabled={isSending}>
+                <button key={prompt} type="button" onClick={() => void sendMessage(prompt)} disabled={isSending || isTranscribing}>
                   {prompt}
                 </button>
               ))}
@@ -805,7 +907,7 @@ export default function Home() {
             className={`mic-button ${agentState === "listening" ? "is-recording" : ""}`}
             size="lg"
             onClick={toggleRecording}
-            disabled={agentState === "thinking" || agentState === "speaking"}
+            disabled={agentState === "thinking" || agentState === "speaking" || isTranscribing}
             aria-label={agentState === "listening" ? "结束录音" : "开始录音"}
           >
             {agentState === "listening" ? <MicOff size={23} /> : <Mic size={23} />}
