@@ -22,6 +22,7 @@ const llmIntents = new Set<AgentIntent>([
 ]);
 
 const ruleOnlyIntents = new Set<AgentIntent>([
+  "game_move",
   "accept_recommendation",
   "pause_game",
   "end_game",
@@ -77,6 +78,10 @@ export async function enrichWithDeepSeek(
     input.activeGameId,
   );
   const nickname = input.nickname?.trim() || "朋友";
+  const activeGame = getGame(input.activeGameId);
+  const continuingConversationGame = Boolean(
+    input.phase === "playing" && activeGame?.playMode === "conversation",
+  );
   const history = (input.history ?? [])
     .slice(-8)
     .filter((item) => item.content.trim())
@@ -159,9 +164,14 @@ ${gameKnowledge}
     );
     const recommendation = requestedGameIsAllowed
       ? toRecommendation(requestedGame!)
-      : ruleResponse.recommendation;
+      : ruleResponse.recommendation ??
+        (continuingConversationGame && activeGame
+          ? toRecommendation(activeGame)
+          : null);
     const phase =
-      ruleResponse.intent === "reject_recommendation"
+      continuingConversationGame
+        ? "playing"
+        : ruleResponse.intent === "reject_recommendation"
         ? recommendation
           ? "recommending"
           : "chatting"

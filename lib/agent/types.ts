@@ -4,6 +4,7 @@ export type AgentIntent =
   | "seek_companionship"
   | "request_recommendation"
   | "select_game"
+  | "game_move"
   | "accept_recommendation"
   | "reject_recommendation"
   | "ask_rules"

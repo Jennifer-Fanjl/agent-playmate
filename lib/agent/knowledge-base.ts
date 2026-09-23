@@ -54,30 +54,6 @@ export const gameKnowledgeBase: GameDefinition[] = [
     tool: "chat_rock_paper_scissors",
   },
   {
-    id: "brain_teaser",
-    name: "脑筋急转弯",
-    summary: "不用准备道具，适合放松一下和快速活跃气氛。",
-    description: "Agent 每次给出一道全年龄脑筋急转弯，并根据回答提供提示或揭晓答案。",
-    objective: "通过联想和语言反差猜出题目答案。",
-    players: "1 位或多位用户 + Agent",
-    materials: ["无需道具"],
-    durationMinutes: 5,
-    difficulty: "轻松",
-    tags: ["动脑", "聊天", "轻松", "全年龄"],
-    keywords: ["脑筋急转弯", "猜谜", "谜语", "提示", "动脑"],
-    playMode: "conversation",
-    supportedByRobot: false,
-    setup: ["确认用户想要轻松题还是稍难题。"],
-    rules: ["Agent 每轮出一道题。", "用户可以直接回答、要求提示或选择揭晓答案。", "揭晓后再决定是否进入下一题。"],
-    winCondition: "以答对题目和获得轻松体验为目标，不累计强制比分。",
-    recommendWhen: ["用户觉得无聊", "想动脑但不想下棋", "现场没有道具"],
-    avoidWhen: ["用户明确不喜欢猜谜", "需要严格竞赛计分"],
-    hostFlow: ["选择难度。", "给出题目。", "等待回答或提示请求。", "解释答案。", "调整下一题难度。"],
-    limitations: ["题目由 Agent 主持，需要过滤不适合全年龄用户的内容。"],
-    openingLine: "第一题来啦：什么东西越洗越脏？你可以直接猜，也可以向我要一个提示。",
-    tool: "chat_brain_teaser",
-  },
-  {
     id: "quick_quiz",
     name: "默契快问快答",
     summary: "通过几个轻松选择题，让我更快了解你的偏好。",
@@ -223,10 +199,7 @@ export function recommendKnowledgeGame(
       }
     }
 
-    if (/无聊|没事做|不知道|随便/.test(text)) {
-      if (game.id === "brain_teaser") score += 5;
-      if (game.id === "quick_quiz") score += 4;
-    }
+    if (/无聊|没事做|不知道|随便/.test(text) && game.id === "quick_quiz") score += 4;
     if (/很快|快点|马上|一分钟|两分钟/.test(text) && game.id === "rock_paper_scissors") score += 6;
     if (/认真|策略|下棋|对弈/.test(text) && game.id === "tic_tac_toe") score += 6;
     if (/认识我|了解我|选择题|偏好/.test(text) && game.id === "quick_quiz") score += 6;

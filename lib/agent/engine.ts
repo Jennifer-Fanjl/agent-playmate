@@ -38,6 +38,33 @@ const patterns = {
   bored: ["无聊", "没意思", "没事做", "发呆"],
 };
 
+type RockPaperScissorsMove = "石头" | "剪刀" | "布";
+const rockPaperScissorsMoves: RockPaperScissorsMove[] = ["石头", "剪刀", "布"];
+
+function parseRockPaperScissorsMove(message: string): RockPaperScissorsMove | null {
+  const normalized = message
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/[\s，。！？、,.!?]/g, "");
+  const match = normalized.match(
+    /^(?:我)?(?:这局|这把)?(?:要|想|就|会)?(?:出|选|选择|用)?(?:的是)?(石头|剪刀|布)(?:吧|了|哦|呀|啊)?$/,
+  );
+  return (match?.[1] as RockPaperScissorsMove | undefined) ?? null;
+}
+
+function resolveRockPaperScissorsRound(playerMove: RockPaperScissorsMove) {
+  const agentMove =
+    rockPaperScissorsMoves[Math.floor(Math.random() * rockPaperScissorsMoves.length)];
+  const playerWins =
+    (playerMove === "石头" && agentMove === "剪刀") ||
+    (playerMove === "剪刀" && agentMove === "布") ||
+    (playerMove === "布" && agentMove === "石头");
+  const result =
+    playerMove === agentMove ? "平局" : playerWins ? "你赢了" : "这一轮我赢了";
+
+  return `你出${playerMove}，我出${agentMove}——${result}！再来一轮吗？直接告诉我你要出什么。`;
+}
+
 function includesAny(message: string, candidates: string[]) {
   return candidates.some((candidate) => message.includes(candidate));
 }
@@ -82,7 +109,6 @@ export function respondToUser(input: AgentRequest): AgentResponse {
   const nickname = input.nickname?.trim() || "朋友";
   const message = input.message?.trim() || "";
   const phase = input.phase ?? "chatting";
-  const intent = classifyIntent(message, phase);
   const emotion = inferEmotion(message);
   const executableGame = getExecutableGames()[0];
   const selectedGame = findGameInMessage(message);
@@ -101,6 +127,32 @@ export function respondToUser(input: AgentRequest): AgentResponse {
       source: "rules",
     };
   }
+
+  const rockPaperScissorsMove =
+    activeGame.id === "rock_paper_scissors" &&
+    (phase === "recommending" || phase === "playing")
+      ? parseRockPaperScissorsMove(message)
+      : null;
+
+  if (rockPaperScissorsMove) {
+    return {
+      intent: "game_move",
+      emotion: "happy",
+      reply: resolveRockPaperScissorsRound(rockPaperScissorsMove),
+      phase: "playing",
+      recommendation: toRecommendation(activeGame),
+      action:
+        phase === "recommending"
+          ? {
+              type: "start_conversation_game",
+              payload: { gameId: activeGame.id },
+            }
+          : emptyAction,
+      source: "rules",
+    };
+  }
+
+  const intent = classifyIntent(message, phase);
 
   switch (intent) {
     case "greeting":
@@ -180,7 +232,7 @@ export function respondToUser(input: AgentRequest): AgentResponse {
         return {
           intent,
           emotion,
-          reply: `${activeGame.name}目前还在扩展计划中。我们可以先玩井字棋、脑筋急转弯或石头剪刀布。`,
+          reply: `${activeGame.name}目前还在扩展计划中。我们可以先玩井字棋、默契快问快答或石头剪刀布。`,
           phase: "chatting",
           recommendation: null,
           action: emptyAction,
